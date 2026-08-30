@@ -1,0 +1,254 @@
+default_target: jetson-agx-thor
+supported_targets:
+  - jetson-agx-thor
+
+initramfs:
+  filesystem: cpio.gz
+
+extensions:
+  avocado-bsp-mic-742:
+    version: 0.1.0
+    release: r0
+    summary: Board support for the Advantech MIC-742 (carrier extension on jetson-agx-thor)
+    description: |
+      Layered carrier support for the Advantech MIC-742 — the Jetson AGX Thor
+      T4000 (P3834-0000 CVM) variant of Advantech's MIC-74x industrial edge AI
+      system. The MIC-743 is the same carrier with a T5000 (P3834-0008) module
+      and has its own extension; the carrier half of the two is identical, so
+      the pinmux/GPIO/prod BCTs and the kernel-DT overlay here are byte-for-byte
+      the MIC-743's. What differs is the module: SDRAM BCTs, BPMP DTB and
+      firmware, PMIC and MISC BCTs, chip SKU and RAMCODE, listed in carrier.env.
+
+      Split into two extensions rather than one because those module flashvars
+      are not interchangeable — flashing a T4000 with T5000 SDRAM training and
+      PMIC config is not a soft failure — and because pinning CHECK_BOARDSKU
+      per extension makes a mismatched module fail fast at the tegraflash
+      board-ID check.
+
+      CAVEAT: the carrier half is hardware-verified (on a MIC-743); the T4000
+      module half is NOT. Advantech's SDK is labelled MIC-742 but only ever
+      flashes the T5000 profile, so the T4000 values are derived from NVIDIA's
+      own p3834-0000-p4071-0000-nvme.conf in the same R39.2.0 BSP. Supporting
+      evidence that the variant is real: Advantech shipped a
+      tegra264-p4071-0000+p3834-0000-nv.dtb carrying the same carrier patch as
+      the T5000 DTB. Confirm on hardware before treating this as proven.
+
+      Advantech's Flash SOP runs the STOCK NVIDIA profile
+      (`l4t_initrd_flash.sh jetson-agx-thor-devkit internal`), so the
+      avocado-jetson-agx-thor MACHINE defaults are the correct baseline and
+      this extension carries only the carrier delta. That delta was derived by
+      diffing Advantech's MIC-742_Thor_7.2_V1.0.0_SDK against the stock NVIDIA
+      Jetson_Linux_R39.2.0_aarch64 BSP — the same L4T release wrynose pins, so
+      none of it is a cross-release backport.
+
+      Flash-time carrier files (stone/carrier-bsp/, see carrier.env):
+        * tegra264-mb1-bct-pinmux-p3834-xxxx-p4071-0000.dtsi — 61 changed pin
+          blocks (CAN2/CAN3, eth0/eth3 MDIO, gen3/gen9 I2C, PWM2/3, DAP2/DAP6).
+        * tegra264-mb1-bct-gpio-p3834-xxxx-p4071-0000.dtsi — carrier boot GPIO
+          defaults (pin-header buffers + direction pins, USB VBUS enable, AON
+          DI/DO inputs).
+        * tegra264-mb1-bct-prod-p3834-xxxx-p4071-0000.dts — I2C1 drive-strength
+          fix so MB1 can read the SoM EEPROM through the carrier's 1.8↔3.3V
+          level shifter (NVIDIA bug 5459342).
+        * tegra264-bpmp-3834-0000-4071-xxxx-adv.dtb — the stock T4000
+          BPMP DTB with pcie@3 enabled (the same one-property change Advantech
+          made to the T5000 BPMP DTB).
+        * tegra264-mic-74x-carrier.dtbo — the kernel-DT delta, as an overlay
+          rather than a forked 256KB DTB. Four fragments: the discrete
+          Infineon SLB9670 TPM on SPI2 CS0, PCIe C3 (SATA), the DCE SHA
+          carveout, and the internal-speaker audio routing. Verified offline by
+          applying it to the stock R39.2.0 DTB with fdtoverlay and diffing
+          against Advantech's shipped DTB.
+
+      Carrier hardware (confirmed on a running MIC-743, same carrier): Infineon
+      SLB9670 TPM 2.0 (spi2.0, /dev/tpm0), ASMedia ASM106x SATA on PCIe C3, 4x
+      on-SoC MGBE 10GbE + Realtek r8126, 4x CAN (mttcan), 4x ttyS, RT5640 audio,
+      AT24 EEPROMs, TMP451/LM90, INA3221/INA238.
+    license: Apache-2.0
+    url: https://github.com/avocadolinux/avocado-os
+    vendor: Avocado Linux <info@avocadolinux.org>
+
+    types:
+      - sysext
+      - confext
+
+    # See the note in bsp-jetson-agx-thor: none of tegra-drm's modaliases match
+    # tegra264, and on Thor it attaches as a host1x driver rather than binding a
+    # DT node, so udev never autoloads it and cuInit fails with 801.
+    modprobe:
+      - tegra-drm
+
+    package_files:
+      - overlay
+      - stone
+      - avocado.yaml
+
+    # Carrier overlay files live under stone/. avocado-cli composes this into
+    # the runtime's effective AVOCADO_STONE_INCLUDE_PATHS, scoped to this
+    # extension's location, so consumers fetching this BSP as a remote
+    # extension find the carrier files at
+    # $AVOCADO_PREFIX/includes/avocado-bsp-mic-742/stone/.
+    stone_include_paths:
+      - stone
+
+    # Confext overlay — ships /etc/hostname so the device identifies as
+    # `mic-742` rather than the MACHINE-derived `avocado-jetson-agx-thor`.
+    overlay: overlay
+
+    on_merge:
+      - udevadm control --reload
+      - udevadm trigger --type=subsystems --action=add --settle
+      - udevadm trigger --type=devices --action=add --settle
+      - nvbootctrl verify
+
+    packages:
+      # ======================================================================
+      # SOM base set — tracks bsp-jetson-agx-thor. See that extension for the
+      # full rationale on the openrm/CUDA block and the deliberate absence of
+      # kernel-module-nvgpu (Thor's GPU is a PCIe Blackwell part that nvgpu and
+      # nvidia.ko would race to bind).
+      # ======================================================================
+      kernel-module-crypto-engine: '*'
+      kernel-module-host1x: '*'
+      kernel-module-host1x-fence: '*'
+      kernel-module-host1x-nvhost: '*'
+      kernel-module-ipv6: '*'
+      kernel-module-ivc-cdev: '*'
+      kernel-module-lz4: '*'
+      kernel-module-lz4-compress: '*'
+      kernel-module-nv-gpu-static-pg: '*'
+      kernel-module-nvethernet: '*'
+      kernel-module-nvhost-pva: '*'
+      kernel-module-nvhwpm: '*'
+      kernel-module-nvidia: '*'
+      kernel-module-nvidia-drm: '*'
+      kernel-module-nvidia-modeset: '*'
+      kernel-module-nvidia-uvm: '*'
+      kernel-module-tegra-dce: '*'
+      kernel-module-tsecriscv: '*'
+      nv-kernel-module-tegra-drm: '*'
+      tegra-configs-display-driver: '*'
+      tegra-configs-sysctl: '*'
+      tegra-configs-udev: '*'
+      tegra-nvpmodel-base: '*'
+      tegra-nvpower: '*'
+      tegra-nvsciipc: '*'
+      kernel-module-nvidia-vrs-pseq: '*'
+      kernel-module-nvmap: '*'
+      kernel-module-nvme: '*'
+      kernel-module-nvme-core: '*'
+      kernel-module-nvpmodel-clk-cap: '*'
+      kernel-module-nvpps: '*'
+      kernel-module-nvsciipc: '*'
+      kernel-module-nvvrs-pseq-rtc: '*'
+      kernel-module-pcie-tegra264: '*'
+      kernel-module-pwm-fan: '*'
+      kernel-module-pwm-tegra: '*'
+      kernel-module-pwm-tegra-tachometer: '*'
+      kernel-module-r8126: '*'
+      kernel-module-ramoops: '*'
+      kernel-module-realtek: '*'
+      kernel-module-sch-fq-codel: '*'
+      kernel-module-spi-tegra114: '*'
+      kernel-module-tegra-bpmp-bwmgr: '*'
+      kernel-module-tegra-bpmp-thermal: '*'
+      kernel-module-tegra-cactmon-mc-all: '*'
+      kernel-module-tegra-se: '*'
+      kernel-module-tegra-se-kds: '*'
+      kernel-module-tegra-xudc: '*'
+      kernel-module-tegra234-oc-event: '*'
+      kernel-module-tegra23x-psc: '*'
+      kernel-module-thermal-trip-event: '*'
+      kernel-module-zram: '*'
+      kernel-module-zsmalloc: '*'
+      linux-firmware-rtl8168: '*'
+      swupdate: '*'
+      tegra-redundant-boot-base: '*'
+
+      # ======================================================================
+      # Carrier additions. Each group lists its intermediates explicitly rather
+      # than leaning on RPM dependency resolution, so the set stays legible and
+      # a missing dep shows up at package-solve time instead of as a silently
+      # unbound device. RDEPENDS were read out of the built pkgdata for this
+      # MACHINE, not guessed.
+      # ======================================================================
+
+      # --- Discrete TPM 2.0 (Infineon SLB9670, SPI2 CS0) --------------------
+      # Bound by the carrier overlay's fragment@0. tpm_tis_spi depends on
+      # tpm_tis_core; the TPM core itself is CONFIG_TCG_TPM=y (built in), so
+      # there is no kernel-module-tpm package to add underneath.
+      #
+      # kernel-module-tpm-ftpm-tee is deliberately NOT listed. The overlay
+      # replaces tegra264-ftpm.dtbo, so there is no fTPM DT node on this board
+      # and the module would load with nothing to bind. Shipping both TPMs
+      # would race for /dev/tpm0 vs /dev/tpm1 with no deterministic order,
+      # which silently breaks PCR sealing. See carrier.env.
+      kernel-module-tpm-tis-core: '*'
+      kernel-module-tpm-tis-spi: '*'
+
+      # --- SATA (ASMedia ASM106x on PCIe C3) --------------------------------
+      # No modules needed: this kernel has CONFIG_ATA=y, CONFIG_SATA_AHCI=y,
+      # CONFIG_SCSI=y and CONFIG_BLK_DEV_SD=y — the whole AHCI/libata/sd path
+      # is built in. The controller is brought up by the ODMDATA + BPMP DTB +
+      # overlay combination in carrier.env, not by a package.
+
+      # --- CAN (4x, on-SoC MTTCAN) ------------------------------------------
+      # nv-kernel-module-mttcan RDEPENDS on can-dev and nvpps. The can /
+      # can-raw / can-bcm protocol modules are what lets userspace actually
+      # open an AF_CAN socket; the driver alone only creates the netdev.
+      nv-kernel-module-mttcan: '*'
+      kernel-module-can: '*'
+      kernel-module-can-dev: '*'
+      kernel-module-can-raw: '*'
+      kernel-module-can-bcm: '*'
+
+      # --- I2C carrier devices ----------------------------------------------
+      # at24 (SoM + carrier EEPROMs) and rt5640 both RDEPEND on i2c-core and
+      # regmap-i2c; lm90 backs the TMP451 the carrier exposes as hwmon.
+      kernel-module-i2c-core: '*'
+      kernel-module-regmap-i2c: '*'
+      kernel-module-at24: '*'
+      kernel-module-lm90: '*'
+      kernel-module-ina238: '*'
+      kernel-module-ina3221: '*'
+
+      # --- Audio (RT5640 codec, internal speaker via overlay fragment@3) ----
+      # rl6231 is the shared Realtek clock/PLL helper rt5640 depends on.
+      kernel-module-snd-soc-rl6231: '*'
+      kernel-module-snd-soc-rt5640: '*'
+
+      # --- Misc carrier I/O --------------------------------------------------
+      # spidev backs the SPI pin header (SPI0/1/3 stay generic spidev nodes;
+      # only SPI2 CS0 is retargeted to the TPM). onboard-usb-hub drives the
+      # carrier's Genesys Logic hubs.
+      kernel-module-spidev: '*'
+      kernel-module-onboard-usb-hub: '*'
+
+      # --- M.2 option slots --------------------------------------------------
+      # Not populated on the units introspected so far, but the carrier wires
+      # both an E-key (WiFi/BT) and a B-key (WWAN) slot, and Advantech's own
+      # kernel rebuild adds exactly this support — it is the ONLY delta in
+      # their kernel config vs stock (IWLWIFI, RTW88/RTW89, QMI_WWAN, USB_WDM,
+      # USB_SERIAL_QUALCOMM; everything else is identical).
+      #
+      # WiFi uses NVIDIA's OOT Realtek drivers rather than upstream rtw88/rtw89,
+      # matching what p4071.inc already selects for this MACHINE. The two drive
+      # the same silicon and must not both be installed.
+      nv-kernel-module-rtl8852ce: '*'
+      kernel-module-cfg80211: '*'
+      tegra-firmware-rtl8852: '*'
+      # WWAN: usbserial → usb-wwan → option is the AT/PPP path for a Qualcomm
+      # M.2 modem, and is what this kernel config supports today. NOTE: the
+      # QMI path (ModemManager's preferred one) needs CONFIG_USB_NET_QMI_WWAN,
+      # CONFIG_USB_WDM and CONFIG_USB_SERIAL_QUALCOMM, all currently unset in
+      # the wrynose Tegra kernel — a 3-line config fragment in meta-avocado, not
+      # something this extension can fix. Left out until a modem is on hand.
+      kernel-module-usbnet: '*'
+      kernel-module-usbserial: '*'
+      kernel-module-usb-wwan: '*'
+      kernel-module-option: '*'
+      kernel-module-cdc-acm: '*'
+      kernel-module-cdc-ether: '*'
+
+sdk:
+  image: docker.io/avocadolinux/sdk:{{ env.AVOCADO_DISTRO_RELEASE }}

@@ -1,0 +1,133 @@
+// SPDX-License-Identifier: Apache-2.0
+/*
+ * Advantech MIC-742 / MIC-743 carrier overlay (Jetson AGX Thor, tegra264).
+ *
+ * Applied at flash time via CARRIER_FV_OVERLAY_DTB_FILE in carrier.env, this
+ * replaces the MACHINE-baked OVERLAY_DTB_FILE (tegra264-ftpm.dtbo) rather than
+ * adding to it -- see the fTPM note on fragment@0 below.
+ *
+ * This is the whole kernel-DT delta between the stock NVIDIA AGX Thor devkit
+ * DTB and the DTB Advantech ships, and it is BYTE-IDENTICAL between the T5000
+ * (p3834-0008) and T4000 (p3834-0000) variants -- which is why one overlay
+ * serves both the MIC-743 and the MIC-742 instead of two full 256KB DTBs.
+ *
+ * Verified by applying this overlay to the stock R39.2.0
+ * tegra264-p4071-0000+p3834-0008-nv.dtb with fdtoverlay and diffing the result
+ * against Advantech's DTB from MIC-742_Thor_7.2_V1.0.0_SDK; see
+ * carrier.env and the README for the one documented remaining difference
+ * (usb3-1, deliberately not carried -- rationale below).
+ *
+ * Node paths are absolute rather than label-based on purpose: the base DTB's
+ * __symbols__ carries no labels for the padctl lanes or the DCE carveout, so
+ * target-path is the only form that resolves for all four fragments.
+ */
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	overlay-name = "Advantech MIC-74x carrier";
+
+	/*
+	 * Discrete TPM 2.0 -- Infineon SLB9670 on SPI2 CS0
+	 * (/bus@0/spi@810c440000, the `spi2` alias; matches the running board,
+	 * which enumerates it as spi2.0 with modalias spi:slb9670).
+	 *
+	 * Stock leaves this chip select as a generic `tegra-spidev` userspace
+	 * node at 50MHz. The MIC-74x populates it with a real SLB9670, so bind
+	 * tpm_tis_spi instead and drop the clock to the 1MHz the part is rated
+	 * for on this board (Advantech's value; the SLB9670 tops out at 43MHz
+	 * but the carrier routing is not characterised above 1MHz).
+	 *
+	 * This is why the overlay REPLACES tegra264-ftpm.dtbo instead of being
+	 * appended to it. Shipping both would give Linux two TPMs -- the OP-TEE
+	 * fTPM and this one -- racing for /dev/tpm0 vs /dev/tpm1 with no
+	 * guaranteed order, and anything sealing to a PCR (cryptsetup-var seals
+	 * to PCR 7) would silently bind to whichever probed first. Pick one at
+	 * the DT layer; a package-install choice cannot fix this, because the
+	 * device node only exists if the DT node does.
+	 */
+	fragment@0 {
+		target-path = "/bus@0/spi@810c440000/spi@0";
+		__overlay__ {
+			compatible = "infineon,slb9670";
+			spi-max-frequency = <0x000f4240>;
+			status = "okay";
+
+			controller-data {
+			};
+		};
+	};
+
+	/*
+	 * PCIe C3 -- the carrier's ASMedia ASM106x SATA AHCI controller.
+	 *
+	 * Disabled on the devkit (nothing is wired to C3 there). Enabling the
+	 * node is necessary but NOT sufficient: the C3 UPHY lanes are only
+	 * powered when MB1 is told to map them, which is the
+	 * CARRIER_ENV_ODMDATA="uphy0-config-6,pcie@3_status=okay" half of this
+	 * change, plus the matching pcie@3 status in the carrier BPMP DTB.
+	 * All three are required; Advantech sets all three.
+	 */
+	fragment@1 {
+		target-path = "/bus@0/pcie@a808440000";
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	/*
+	 * DCE SHA carveout -- enabled by Advantech; stock disables it.
+	 */
+	fragment@2 {
+		target-path = "/dce@8808000000/sha-carveout";
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	/*
+	 * Audio -- the carrier wires the RT5640's line outputs to an internal
+	 * speaker, which the devkit does not have. Adds the Speaker widget and
+	 * the LOUTL/LOUTR routes; the mic and headphone paths are unchanged
+	 * from stock and are repeated here only because `widgets` and `routing`
+	 * are whole-property overrides.
+	 */
+	fragment@3 {
+		target-path = "/sound";
+		__overlay__ {
+			widgets = "Microphone", "CVB-RT MIC Jack",
+				  "Microphone", "CVB-RT MIC",
+				  "Speaker", "CVB-RT Int Spk",
+				  "Headphone", "CVB-RT HP Jack";
+			routing = "CVB-RT AIF1 Playback", "I2S4 DAP-Playback",
+				  "I2S4 DAP-Capture", "CVB-RT AIF1 Capture",
+				  "CVB-RT HP Jack", "CVB-RT HPOL",
+				  "CVB-RT HP Jack", "CVB-RT HPOR",
+				  "CVB-RT IN1P", "CVB-RT MIC Jack",
+				  "CVB-RT IN2P", "CVB-RT MIC Jack",
+				  "CVB-RT Int Spk", "CVB-RT LOUTL",
+				  "CVB-RT Int Spk", "CVB-RT LOUTR",
+				  "CVB-RT DMIC1", "CVB-RT MIC",
+				  "CVB-RT DMIC2", "CVB-RT MIC";
+		};
+	};
+
+	/*
+	 * DELIBERATELY NOT CARRIED: Advantech also disables the usb3-1 lane and
+	 * port and removes it from the `phys`/`phy-names` arrays on
+	 * /bus@0/usb@a808670000 (xudc) and /bus@0/usb@a80aa10000 (xhci),
+	 * because the carrier only wires usb3-0 and usb3-2.
+	 *
+	 * Rewriting those arrays from an overlay means re-emitting a phandle
+	 * list, and the base DTB exposes no __symbols__ labels for the
+	 * individual padctl lanes -- so it cannot be expressed safely here.
+	 * Disabling the lane WITHOUT trimming the arrays is worse than leaving
+	 * it alone: xhci-tegra would still resolve a phy for a disabled lane on
+	 * a boot-critical controller. Left enabled, usb3-1 is simply an unwired
+	 * port that never links, exactly as on the devkit.
+	 *
+	 * If the trim is ever wanted, ship Advantech's full DTB via
+	 * CARRIER_ENV_DTBFILE instead of this overlay.
+	 */
+};
