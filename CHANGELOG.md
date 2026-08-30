@@ -18,9 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TPM 2.0 on SPI2 CS0, PCIe C3 (ASMedia ASM106x SATA), DCE SHA carveout, and
   internal-speaker audio routing. Shared verbatim with the sibling MIC-74x
   extension; verified offline with `fdtoverlay` against Advantech's shipped DTB.
-- SATA enablement via `CARRIER_ENV_ODMDATA` (`uphy0-config-6,pcie@3_status=okay`),
-  a carrier BPMP DTB with `pcie@3` enabled, and the overlay's PCIe fragment.
-  `UPHY_CONFIG` is cleared because `uphy0-config-6` supersedes the stock lane table.
+- SATA enablement via three coordinated settings: `/uphy/uphy0-config = 6` and
+  `/pcie/pcie@3 status = "okay"` baked into the carrier BPMP DTB, plus the
+  overlay's `pcie@a808440000` fragment. `UPHY_CONFIG` is cleared to match
+  Advantech; the BPMP's `uphy0-config` is what assigns the C3 lanes.
+  `uphy0-config` is baked rather than left to `ODMDATA` because avocado's
+  `initrd-flash.sh` `sign_binaries()` does not export `ODMDATA` to the flash
+  helper, so `--odmdata` is never passed and `tegraflash_update_bpmp_dtb()`
+  never runs. Missing it stops the board before the kernel with
+  `PCIe(3): is enabled in DT without enabling it in UPHY DT` ->
+  `BPMP firmware is not ready` -> BL31 `ASSERT` at `plat_setup.c:726`.
+  Found on hardware during first provision of a MIC-743.
 - Carrier module set with explicit intermediates: TPM (`tpm-tis-spi` +
   `tpm-tis-core`), CAN (`mttcan` + `can-dev`/`can`/`can-raw`/`can-bcm`), I2C
   devices (`at24`, `lm90`, `ina238`, `ina3221` + `i2c-core`/`regmap-i2c`), audio

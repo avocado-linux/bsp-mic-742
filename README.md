@@ -63,14 +63,20 @@ carrier description — the flash-time BCTs, the four-fragment kernel-DT overlay
 offline `fdtoverlay` verification all apply identically here.
 
 The one file that differs is `tegra264-bpmp-3834-0000-4071-xxxx-adv.dtb`: the stock T4000
-BPMP DTB with `pcie@3` flipped `disabled` → `okay`, the identical one-property change
-Advantech made to the T5000 BPMP DTB. Regenerate it with:
+BPMP DTB with the same two carrier properties the MIC-743's carries. Regenerate it with:
 
 ```sh
 dtc -I dtb -O dts <stock>/tegra264-bpmp-3834-0000-4071-xxxx.dtb > bpmp.dts
-# set pcie@3 { status = "okay"; }
+# /pcie/pcie@3  { status = "okay"; }     enable the ASMedia SATA controller
+# /uphy         { uphy0-config = <0x06>; }  UPHY lane map that includes PCIe C3
 dtc -I dts -O dtb -o tegra264-bpmp-3834-0000-4071-xxxx-adv.dtb bpmp.dts
 ```
+
+Both are module-SKU independent. `uphy0-config` **must** be baked rather than left to
+`ODMDATA`: see the MIC-743 README — `sign_binaries()` in avocado's `initrd-flash.sh` does
+not export `ODMDATA` to the flash helper, so `--odmdata` is never passed and the BPMP DTB
+is never patched. Without it the board dies at `PCIe(3): is enabled in DT without enabling
+it in UPHY DT` → `BPMP firmware is not ready` → BL31 `ASSERT`.
 
 ## TPM: discrete, not fTPM
 
