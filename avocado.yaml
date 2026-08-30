@@ -146,7 +146,6 @@ extensions:
       kernel-module-pwm-tegra: '*'
       kernel-module-pwm-tegra-tachometer: '*'
       kernel-module-r8126: '*'
-      kernel-module-ramoops: '*'
       kernel-module-realtek: '*'
       kernel-module-sch-fq-codel: '*'
       kernel-module-spi-tegra114: '*'
@@ -222,7 +221,6 @@ extensions:
       # only SPI2 CS0 is retargeted to the TPM). onboard-usb-hub drives the
       # carrier's Genesys Logic hubs.
       kernel-module-spidev: '*'
-      kernel-module-onboard-usb-hub: '*'
 
       # --- M.2 option slots --------------------------------------------------
       # Not populated on the units introspected so far, but the carrier wires
@@ -231,12 +229,11 @@ extensions:
       # their kernel config vs stock (IWLWIFI, RTW88/RTW89, QMI_WWAN, USB_WDM,
       # USB_SERIAL_QUALCOMM; everything else is identical).
       #
-      # WiFi uses NVIDIA's OOT Realtek drivers rather than upstream rtw88/rtw89,
-      # matching what p4071.inc already selects for this MACHINE. The two drive
-      # the same silicon and must not both be installed.
-      nv-kernel-module-rtl8852ce: '*'
+      # WiFi is kernel-dependent and lives in the kernel-* blocks below: the
+      # L4T kernel uses NVIDIA's OOT Realtek driver, the upstream kernel uses
+      # mainline rtw89. The two drive the same silicon and must never both be
+      # installed. cfg80211 exists for both kernels, so it stays here.
       kernel-module-cfg80211: '*'
-      tegra-firmware-rtl8852: '*'
       # WWAN: usbserial → usb-wwan → option is the AT/PPP path for a Qualcomm
       # M.2 modem, and is what this kernel config supports today. NOTE: the
       # QMI path (ModemManager's preferred one) needs CONFIG_USB_NET_QMI_WWAN,
@@ -247,8 +244,45 @@ extensions:
       kernel-module-usbserial: '*'
       kernel-module-usb-wwan: '*'
       kernel-module-option: '*'
-      kernel-module-cdc-acm: '*'
       kernel-module-cdc-ether: '*'
+
+    # ========================================================================
+    # Kernel-conditional packages.
+    #
+    # jetson-agx-thor is a multi-kernel target: the default multiconfig builds
+    # upstream linux-yocto and the `jetson-l4t` mc builds the L4T 6.8 kernel,
+    # and BOTH land in one feed. avocado-cli resolves the active KERNEL_VERSION
+    # and suffixes kernel-family package names with it, so a module that only
+    # one kernel builds must be scoped here or the install fails with
+    # "Unable to find a match" / "filtered out by exclude filtering".
+    #
+    # `kernel-<spec>` globs are prefix matches on the resolved version, so
+    # `6.8.*` matches 6.8.12-l4t-r39.2.0-1021.21 and `6.18.*` matches
+    # 6.18.35-yocto-standard, with no cross-matching between them.
+    # ========================================================================
+
+    # L4T 6.8 (linux-noble-nvidia-tegra). ramoops (PSTORE_RAM), the onboard USB
+    # hub driver and cdc-acm are enabled in this kernel's config but not in the
+    # upstream one. WiFi is NVIDIA's OOT rtl8852ce plus its tegra-firmware.
+    kernel-6.8.*:
+      packages:
+        kernel-module-ramoops: '*'
+        kernel-module-onboard-usb-hub: '*'
+        kernel-module-cdc-acm: '*'
+        nv-kernel-module-rtl8852ce: '*'
+        tegra-firmware-rtl8852: '*'
+
+    # Upstream linux-yocto. Mainline rtw89 replaces the OOT Realtek driver for
+    # the same 8852CE M.2 card, with linux-firmware rather than tegra-firmware
+    # — the same split p4071.inc makes via LINUX_WIFI/NVIDIA_WIFI. ramoops,
+    # onboard-usb-hub and cdc-acm are simply not built by this kernel.
+    kernel-6.18.*:
+      packages:
+        kernel-module-rtw89-core: '*'
+        kernel-module-rtw89-pci: '*'
+        kernel-module-rtw89-8852c: '*'
+        kernel-module-rtw89-8852ce: '*'
+        linux-firmware-rtl8852: '*'
 
 sdk:
   image: docker.io/avocadolinux/sdk:{{ env.AVOCADO_DISTRO_RELEASE }}
