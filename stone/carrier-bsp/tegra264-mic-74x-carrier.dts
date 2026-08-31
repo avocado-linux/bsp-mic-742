@@ -50,24 +50,24 @@
 	overlay-name = "Advantech MIC-74x carrier";
 
 	/*
- * Discrete TPM 2.0 -- Infineon SLB9670 on SPI2 CS0
- * (/bus@0/spi@810c440000, the `spi2` alias; matches the running board,
- * which enumerates it as spi2.0 with modalias spi:slb9670).
- *
- * Stock leaves this chip select as a generic `tegra-spidev` userspace
- * node at 50MHz. The MIC-74x populates it with a real SLB9670, so bind
- * tpm_tis_spi instead and drop the clock to the 1MHz the part is rated
- * for on this board (Advantech's value; the SLB9670 tops out at 43MHz
- * but the carrier routing is not characterised above 1MHz).
- *
- * This is why the overlay REPLACES tegra264-ftpm.dtbo instead of being
- * appended to it. Shipping both would give Linux two TPMs -- the OP-TEE
- * fTPM and this one -- racing for /dev/tpm0 vs /dev/tpm1 with no
- * guaranteed order, and anything sealing to a PCR (cryptsetup-var seals
- * to PCR 7) would silently bind to whichever probed first. Pick one at
- * the DT layer; a package-install choice cannot fix this, because the
- * device node only exists if the DT node does.
- */
+	 * Discrete TPM 2.0 -- Infineon SLB9670 on SPI2 CS0
+	 * (/bus@0/spi@810c440000, the `spi2` alias; matches the running board,
+	 * which enumerates it as spi2.0 with modalias spi:slb9670).
+	 *
+	 * Stock leaves this chip select as a generic `tegra-spidev` userspace
+	 * node at 50MHz. The MIC-74x populates it with a real SLB9670, so bind
+	 * tpm_tis_spi instead and drop the clock to the 1MHz the part is rated
+	 * for on this board (Advantech's value; the SLB9670 tops out at 43MHz
+	 * but the carrier routing is not characterised above 1MHz).
+	 *
+	 * This is why the overlay REPLACES tegra264-ftpm.dtbo instead of being
+	 * appended to it. Shipping both would give Linux two TPMs -- the OP-TEE
+	 * fTPM and this one -- racing for /dev/tpm0 vs /dev/tpm1 with no
+	 * guaranteed order, and anything sealing to a PCR (cryptsetup-var seals
+	 * to PCR 7) would silently bind to whichever probed first. Pick one at
+	 * the DT layer; a package-install choice cannot fix this, because the
+	 * device node only exists if the DT node does.
+	 */
 	fragment@0 {
 		target-path = "/bus@0/spi@810c440000/spi@0";
 		__overlay__ {
