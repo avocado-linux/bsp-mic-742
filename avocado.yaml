@@ -188,10 +188,11 @@ extensions:
       kernel-module-tpm-tis-spi: '*'
 
       # --- SATA (ASMedia ASM106x on PCIe C3) --------------------------------
-      # No modules needed: this kernel has CONFIG_ATA=y, CONFIG_SATA_AHCI=y,
-      # CONFIG_SCSI=y and CONFIG_BLK_DEV_SD=y — the whole AHCI/libata/sd path
-      # is built in. The controller is brought up by the ODMDATA + BPMP DTB +
-      # overlay combination in carrier.env, not by a package.
+      # The controller is brought up by the uphy0-config + BPMP DTB + overlay
+      # combination in carrier.env. Whether the AHCI *driver* needs packages is
+      # kernel-dependent, so it lives in the kernel-* blocks below: the L4T
+      # kernel builds CONFIG_ATA/SATA_AHCI in (=y), the upstream one builds
+      # them as modules (=m). CONFIG_SCSI and CONFIG_BLK_DEV_SD are =y on both.
 
       # --- CAN (4x, on-SoC MTTCAN) ------------------------------------------
       # nv-kernel-module-mttcan RDEPENDS on can-dev and nvpps. The can /
@@ -268,6 +269,8 @@ extensions:
     # upstream one. WiFi is NVIDIA's OOT rtl8852ce plus its tegra-firmware.
     kernel-6.8.*:
       packages:
+        # CONFIG_ATA=y and CONFIG_SATA_AHCI=y on this kernel -- the whole
+        # AHCI/libata/sd path is built in, so SATA needs no module here.
         # NVIDIA's OOT r8126 for the RTL8126. Real driver on this kernel
         # (237,888 bytes) and what the L4T BSP ships.
         kernel-module-r8126: '*'
@@ -283,6 +286,14 @@ extensions:
     # onboard-usb-hub and cdc-acm are simply not built by this kernel.
     kernel-6.18.*:
       packages:
+        # SATA. CONFIG_ATA=m and CONFIG_SATA_AHCI=m on the upstream kernel
+        # (both are =y on L4T), so the AHCI driver must be installed or the
+        # ASMedia ASM106x enumerates on PCIe C3 and then binds nothing:
+        # lspci shows 1b21:0622 class 0106, but /sys/class/ata_port is empty
+        # and no sd device appears. Verified on a MIC-743.
+        kernel-module-ahci: '*'
+        kernel-module-libahci: '*'
+        kernel-module-libata: '*'
         # The OOT r8126 does NOT work on the upstream kernel: it builds to a
         # 4,312-byte stub (vs 237,888 on L4T), loads with rc=0, registers no
         # PCI driver, and has no modalias -- so 10ec:8126 sits unbound and
